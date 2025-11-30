@@ -2,29 +2,7 @@ import sys
 import os
 import shutil
 
-
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QTextEdit,
-    QPushButton,
-    QComboBox,
-    QLabel,
-    QFileDialog,
-    QDoubleSpinBox,
-    QMessageBox,
-    QProgressBar,
-    QStyle,
-    QSlider,
-    QSplitter,
-    QTabWidget,
-    QLineEdit,
-    QGroupBox,
-    QFormLayout,
-)
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QStyle
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QFont
@@ -32,6 +10,7 @@ from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QFont
 import tts_handler
 import handle_text
 from translation_worker import TranslationWorker
+from ui import MainWindowUI
 
 
 class TTSWorker(QThread):
@@ -137,12 +116,10 @@ class TTSWorker(QThread):
                 pass
 
 
-class MainWindow(QMainWindow):
+class MainWindow(MainWindowUI):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Faster Reader")
-        self.resize(1280, 720)
-
+        
         # -- Media Player --
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -158,209 +135,29 @@ class MainWindow(QMainWindow):
         self.is_slider_dragged = False
         self.available_voices = []
 
-        self.setup_ui()
+        self.connect_signals()
         self.populate_voices()
 
-    def setup_ui(self):
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        main_layout = QVBoxLayout(main_widget)
-
-        # 1. Top Bar
-        top_layout = QHBoxLayout()
-        self.btn_load = QPushButton("Load Markdown")
-        self.btn_load.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton)
-        )
+    def connect_signals(self):
+        # Top Bar
         self.btn_load.clicked.connect(self.load_file)
-
-        self.combo_voice = QComboBox()
-        self.combo_voice.setMinimumWidth(200)
-
-        self.spin_speed = QDoubleSpinBox()
-        self.spin_speed.setRange(0.5, 2.0)
-        self.spin_speed.setSingleStep(0.1)
-        self.spin_speed.setValue(1.0)
-        self.spin_speed.setPrefix("Speed: x")
-
-        top_layout.addWidget(self.btn_load)
-        top_layout.addStretch()
-        top_layout.addWidget(QLabel("Voice:"))
-        top_layout.addWidget(self.combo_voice)
-        top_layout.addWidget(self.spin_speed)
-        main_layout.addLayout(top_layout)
-
-        # Tabs (Reading / Translation)
-        self.tabs = QTabWidget()
-
-        # Tab 1: Reading (Synced)
-        self.tab_reading = QWidget()
-        reading_layout = QVBoxLayout(self.tab_reading)
         
-        # Reading Input
-        reading_splitter = QSplitter(Qt.Orientation.Vertical)
+        # Reading Tab
+        self.reading_tab.btn_send_to_trans.clicked.connect(self.send_reading_to_translation)
         
-        reading_input_container = QWidget()
-        ric_layout = QVBoxLayout(reading_input_container)
-        ric_layout.addWidget(QLabel("<b>Input (Markdown):</b>"))
-        self.text_editor = QTextEdit() # Keep name for compatibility, but this is Reading Input
-        self.text_editor.setPlaceholderText("Type markdown text here...")
-        ric_layout.addWidget(self.text_editor)
-        ric_layout.setContentsMargins(0,0,0,0)
+        # Translation Tab
+        self.translation_tab.combo_provider.currentIndexChanged.connect(self.on_provider_changed)
+        self.translation_tab.btn_translate.clicked.connect(self.start_translation)
+        self.translation_tab.btn_transfer.clicked.connect(self.transfer_translation)
+        self.translation_tab.btn_send_input_to_read.clicked.connect(self.send_trans_input_to_reading)
         
-        # Reading Output
-        reading_output_container = QWidget()
-        roc_layout = QVBoxLayout(reading_output_container)
-        roc_layout.addWidget(QLabel("<b>Now Playing (Synced):</b>"))
-        self.lyrics_view = QTextEdit()
-        self.lyrics_view.setReadOnly(True)
-        self.lyrics_view.setStyleSheet("font-size: 14pt; color: #555;")
-        roc_layout.addWidget(self.lyrics_view)
-        roc_layout.setContentsMargins(0,0,0,0)
-        
-        reading_splitter.addWidget(reading_input_container)
-        reading_splitter.addWidget(reading_output_container)
-        reading_splitter.setStretchFactor(0, 1)
-        reading_splitter.setStretchFactor(1, 1)
-        
-        # Add "Send to Translation" button
-        self.btn_send_to_trans = QPushButton("Send Input to Translation Tab")
-        self.btn_send_to_trans.clicked.connect(self.send_reading_to_translation)
-        reading_layout.addWidget(self.btn_send_to_trans)
-        
-        reading_layout.addWidget(reading_splitter)
-        self.tabs.addTab(self.tab_reading, "Reading")
-
-
-        # Tab 2: Translation
-        self.tab_translation = QWidget()
-        trans_layout = QVBoxLayout(self.tab_translation)
-        
-        trans_splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # Translation Input
-        trans_input_container = QWidget()
-        tic_layout = QVBoxLayout(trans_input_container)
-        tic_layout.addWidget(QLabel("<b>Translation Input:</b>"))
-        self.trans_input = QTextEdit()
-        self.trans_input.setPlaceholderText("Type text to translate here...")
-        tic_layout.addWidget(self.trans_input)
-        tic_layout.setContentsMargins(0,0,0,0)
-        
-        trans_splitter.addWidget(trans_input_container)
-        
-        # Controls
-        trans_controls = QGroupBox("Settings")
-        trans_form = QFormLayout(trans_controls)
-        
-        self.combo_provider = QComboBox()
-        self.combo_provider.addItems(["Google (Free)", "DeepL (API Key)"])
-        self.combo_provider.currentIndexChanged.connect(self.on_provider_changed)
-        
-        self.input_apikey = QLineEdit()
-        self.input_apikey.setPlaceholderText("Enter DeepL API Key")
-        self.input_apikey.setEchoMode(QLineEdit.EchoMode.Password)
-        self.input_apikey.setEnabled(False) # Default is Google
-
-        self.combo_lang = QComboBox()
-        # Common languages
-        self.combo_lang.addItem("English", "en")
-        self.combo_lang.addItem("French", "fr")
-        self.combo_lang.addItem("Spanish", "es")
-        self.combo_lang.addItem("German", "de")
-        self.combo_lang.addItem("Italian", "it")
-        self.combo_lang.addItem("Portuguese", "pt")
-        self.combo_lang.addItem("Russian", "ru")
-        self.combo_lang.addItem("Japanese", "ja")
-        self.combo_lang.addItem("Chinese (Simplified)", "zh-CN")
-        
-        trans_form.addRow("Provider:", self.combo_provider)
-        trans_form.addRow("API Key:", self.input_apikey)
-        trans_form.addRow("Target Lang:", self.combo_lang)
-        
-        self.btn_translate = QPushButton("Translate Input Text")
-        self.btn_translate.clicked.connect(self.start_translation)
-        
-        self.btn_transfer = QPushButton("Use Translated Text & Switch to Reader")
-        self.btn_transfer.clicked.connect(self.transfer_translation)
-        
-        self.btn_send_input_to_read = QPushButton("Send Input to Reader")
-        self.btn_send_input_to_read.clicked.connect(self.send_trans_input_to_reading)
-        
-        trans_layout.addWidget(trans_controls)
-        trans_layout.addWidget(self.btn_translate)
-        trans_layout.addWidget(self.btn_transfer)
-        trans_layout.addWidget(self.btn_send_input_to_read)
-        
-        # Translation Output
-        trans_output_container = QWidget()
-        toc_layout = QVBoxLayout(trans_output_container)
-        toc_layout.addWidget(QLabel("<b>Translation Output:</b>"))
-        self.trans_output = QTextEdit()
-        self.trans_output.setReadOnly(True)
-        self.trans_output.setPlaceholderText("Translation will appear here...")
-        toc_layout.addWidget(self.trans_output)
-        toc_layout.setContentsMargins(0,0,0,0)
-        
-        trans_splitter.addWidget(trans_output_container)
-        trans_layout.addWidget(trans_splitter)
-        
-        self.tabs.addTab(self.tab_translation, "Translation")
-
-        main_layout.addWidget(self.tabs)
-
-
-        # 3. Player Controls
-        controls_layout = QHBoxLayout()
-
-        # Play/Pause
-        self.btn_play = QPushButton()
-        self.btn_play.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-        )
-        self.btn_play.setFixedSize(40, 40)
+        # Player Controls
         self.btn_play.clicked.connect(self.toggle_playback)
-        self.btn_play.setEnabled(False)  # Disabled until generated
-
-        # Slider
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 0)
         self.slider.sliderPressed.connect(self.on_slider_pressed)
         self.slider.sliderReleased.connect(self.on_slider_released)
         self.slider.valueChanged.connect(self.on_slider_moved)
-        self.slider.setEnabled(False)
-
-        # Time Labels
-        self.lbl_current_time = QLabel("00:00")
-        self.lbl_total_time = QLabel("00:00")
-
-        # Generate Button (The main action)
-        self.btn_generate = QPushButton("Generate & Read")
-        self.btn_generate.setStyleSheet("padding: 5px 15px; font-weight: bold;")
         self.btn_generate.clicked.connect(self.start_generation)
-
-        # Save Button
-        self.btn_save = QPushButton("Save MP3")
         self.btn_save.clicked.connect(self.save_audio)
-
-        controls_layout.addWidget(self.btn_play)
-        controls_layout.addWidget(self.lbl_current_time)
-        controls_layout.addWidget(self.slider)
-        controls_layout.addWidget(self.lbl_total_time)
-        controls_layout.addSpacing(20)
-        controls_layout.addWidget(self.btn_generate)
-        controls_layout.addWidget(self.btn_save)
-
-        main_layout.addLayout(controls_layout)
-
-        # 4. Status
-        self.progress_bar = QProgressBar()
-        self.progress_bar.hide()
-        self.status_label = QLabel("Ready")
-
-        sb = self.statusBar()
-        sb.addWidget(self.status_label)
-        sb.addPermanentWidget(self.progress_bar)
 
     # -- Logic --
 
@@ -390,7 +187,7 @@ class MainWindow(QMainWindow):
             self.combo_voice.addItem(f"{v['name']} ({v['language']})", v["name"])
 
     def start_generation(self):
-        text = self.text_editor.toPlainText().strip()
+        text = self.reading_tab.text_editor.toPlainText().strip()
         if not text:
             return
 
@@ -422,7 +219,7 @@ class MainWindow(QMainWindow):
         self.subtitles = subs
 
         # Setup Lyrics View
-        self.lyrics_view.setPlainText(clean_text)
+        self.reading_tab.lyrics_view.setPlainText(clean_text)
 
         # Setup Player
         self.player.setSource(QUrl.fromLocalFile(path))
@@ -499,7 +296,7 @@ class MainWindow(QMainWindow):
             if sub["start"] <= pos_sec <= (sub["start"] + sub["duration"]):
                 current_sub = sub
                 # Verify if the text at this offset matches
-                doc_text = self.lyrics_view.toPlainText()
+                doc_text = self.reading_tab.lyrics_view.toPlainText()
                 expected_word = sub['text']
                 actual_text = doc_text[sub['text_offset'] : sub['text_offset'] + sub['word_len']]
                 
@@ -513,7 +310,7 @@ class MainWindow(QMainWindow):
             self.highlight_word(current_sub["text_offset"], current_sub["word_len"])
 
     def highlight_word(self, start_index, length):
-        cursor = self.lyrics_view.textCursor()
+        cursor = self.reading_tab.lyrics_view.textCursor()
         cursor.setPosition(start_index)
         cursor.setPosition(start_index + length, QTextCursor.MoveMode.KeepAnchor)
 
@@ -522,20 +319,8 @@ class MainWindow(QMainWindow):
         fmt.setForeground(QColor("#000000"))
         fmt.setFontWeight(QFont.Weight.Bold)
 
-        # Clear previous highlights?
-        # For simplicity, we just reload text if we want to clear,
-        # or we rely on the fact that we move fast.
-        # Ideally: Reset format for whole doc, then apply.
-        # To avoid flicker, we might just un-highlight the *previous* word if we tracked it.
-        # Heavy Reset Approach (Simplest logic, maybe slight flicker on huge texts):
-
-        # Better approach:
-        # We need a way to clear the previous highlight without resetting the whole text.
-        # But for now, let's just highlight. If user wants "Karaoke" style where past text stays colored, that's different.
-        # Let's assume "Teleprompter" style: Highlighting current word ONLY.
-
         # Reset entire doc format
-        select_all = QTextCursor(self.lyrics_view.document())
+        select_all = QTextCursor(self.reading_tab.lyrics_view.document())
         select_all.select(QTextCursor.SelectionType.Document)
         default_fmt = QTextCharFormat()
         default_fmt.setBackground(Qt.GlobalColor.transparent)
@@ -546,31 +331,31 @@ class MainWindow(QMainWindow):
         cursor.setCharFormat(fmt)
 
         # Scroll to ensure visible
-        self.lyrics_view.setTextCursor(cursor)
-        self.lyrics_view.ensureCursorVisible()
+        self.reading_tab.lyrics_view.setTextCursor(cursor)
+        self.reading_tab.lyrics_view.ensureCursorVisible()
 
     def on_provider_changed(self, index):
         is_deepl = (index == 1)
-        self.input_apikey.setEnabled(is_deepl)
+        self.translation_tab.input_apikey.setEnabled(is_deepl)
         if is_deepl:
-            self.input_apikey.setFocus()
+            self.translation_tab.input_apikey.setFocus()
 
     def start_translation(self):
-        text = self.trans_input.toPlainText().strip()
+        text = self.translation_tab.trans_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Empty", "Please enter some text to translate.")
             return
 
-        provider = "google" if self.combo_provider.currentIndex() == 0 else "deepl"
-        api_key = self.input_apikey.text().strip()
-        target_lang = self.combo_lang.currentData()
+        provider = "google" if self.translation_tab.combo_provider.currentIndex() == 0 else "deepl"
+        api_key = self.translation_tab.input_apikey.text().strip()
+        target_lang = self.translation_tab.combo_lang.currentData()
 
         if provider == "deepl" and not api_key:
             QMessageBox.warning(self, "Missing Key", "DeepL requires an API Key.")
             return
 
-        self.btn_translate.setEnabled(False)
-        self.trans_output.setPlainText("Translating...")
+        self.translation_tab.btn_translate.setEnabled(False)
+        self.translation_tab.trans_output.setPlainText("Translating...")
         
         self.trans_worker = TranslationWorker(text, target_lang, provider, api_key)
         self.trans_worker.finished.connect(self.on_trans_finished)
@@ -578,33 +363,30 @@ class MainWindow(QMainWindow):
         self.trans_worker.start()
 
     def on_trans_finished(self, result):
-        self.btn_translate.setEnabled(True)
-        self.trans_output.setPlainText(result)
+        self.translation_tab.btn_translate.setEnabled(True)
+        self.translation_tab.trans_output.setPlainText(result)
 
     def on_trans_error(self, err):
-        self.btn_translate.setEnabled(True)
-        self.trans_output.setPlainText(f"Error: {err}")
+        self.translation_tab.btn_translate.setEnabled(True)
+        self.translation_tab.trans_output.setPlainText(f"Error: {err}")
         QMessageBox.critical(self, "Translation Error", err)
 
     def transfer_translation(self):
-        text = self.trans_output.toPlainText().strip()
+        text = self.translation_tab.trans_output.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Empty", "No translated text to transfer.")
             return
 
         # 1. Transfer text
-        self.text_editor.setText(text)
+        self.reading_tab.text_editor.setText(text)
         
         # 2. Switch tab
         self.tabs.setCurrentIndex(0) # Reading tab
 
         # 3. Auto-select voice
-        target_lang = self.combo_lang.currentData() # e.g. "fr"
+        target_lang = self.translation_tab.combo_lang.currentData() # e.g. "fr"
         
         # Find a voice that starts with this language code
-        # We prefer "Neural" voices if possible, but just matching locale is good start.
-        # self.available_voices is list of dicts: {'name':..., 'gender':..., 'language':...}
-        
         best_voice_name = None
         for v in self.available_voices:
             if v['language'].startswith(target_lang):
@@ -623,17 +405,14 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"No voice found for language {target_lang}")
 
     def send_reading_to_translation(self):
-        text = self.text_editor.toPlainText()
-        self.trans_input.setText(text)
+        text = self.reading_tab.text_editor.toPlainText()
+        self.translation_tab.trans_input.setText(text)
         self.tabs.setCurrentIndex(1) # Switch to Translation
         
     def send_trans_input_to_reading(self):
-        text = self.trans_input.toPlainText()
-        self.text_editor.setText(text)
+        text = self.translation_tab.trans_input.toPlainText()
+        self.reading_tab.text_editor.setText(text)
         self.tabs.setCurrentIndex(0) # Switch to Reading
-        # Attempt to auto-select voice based on current translation target lang?
-        # Or maybe we should infer language from text? That's hard.
-        # Let's just switch. The user can select voice.
 
     # -- Utilities --
 
@@ -648,15 +427,15 @@ class MainWindow(QMainWindow):
             # Load into the active tab's input
             current_index = self.tabs.currentIndex()
             if current_index == 1: # Translation Tab
-                self.trans_input.setText(content)
+                self.translation_tab.trans_input.setText(content)
             else: # Reading Tab (default)
-                self.text_editor.setText(content)
+                self.reading_tab.text_editor.setText(content)
 
     def set_ui_generating(self, generating):
         self.btn_generate.setEnabled(not generating)
         self.btn_play.setEnabled(not generating)
         self.slider.setEnabled(not generating)
-        self.text_editor.setReadOnly(generating)
+        self.reading_tab.text_editor.setReadOnly(generating)
 
     def on_error(self, msg):
         self.set_ui_generating(False)
