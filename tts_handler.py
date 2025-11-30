@@ -178,8 +178,8 @@ def merge_audio_files(file_paths, output_path=None):
                 "0",
                 "-i",
                 list_file.name,
-                "-c",
-                "copy",
+                "-c:a",
+                "libmp3lame",
                 "-y",
                 output_path,
             ]

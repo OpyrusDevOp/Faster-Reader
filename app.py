@@ -86,6 +86,8 @@ class TTSWorker(QThread):
                     # Adjust text offset to match the full concatenated string
                     sub["text_offset"] += chunk_len
                     all_subtitles.append(sub)
+                
+                # print(f"DEBUG: Chunk {i} processed. Audio duration: {tts_handler.get_audio_duration(audio_path):.2f}s. Subtitles count: {len(subtitles)}")
 
                 full_clean_text_reconstructed += chunk + "\n\n"  # Add separation back
 
@@ -154,6 +156,7 @@ class MainWindow(QMainWindow):
         self.subtitles = []
         self.current_audio_path = None
         self.is_slider_dragged = False
+        self.available_voices = []
 
         self.setup_ui()
         self.populate_voices()
@@ -187,35 +190,64 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.spin_speed)
         main_layout.addLayout(top_layout)
 
-        # 2. Main Content (Splitter)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Editor
-        self.editor_container = QWidget()
-        editor_layout = QVBoxLayout(self.editor_container)
-        editor_layout.addWidget(QLabel("<b>Input (Markdown):</b>"))
-        self.text_editor = QTextEdit()
-        self.text_editor.setPlaceholderText("Type markdown text here...")
-        editor_layout.addWidget(self.text_editor)
-
-        editor_layout.setContentsMargins(0, 0, 0, 0)
-
         # Tabs (Reading / Translation)
         self.tabs = QTabWidget()
 
         # Tab 1: Reading (Synced)
         self.tab_reading = QWidget()
         reading_layout = QVBoxLayout(self.tab_reading)
-        reading_layout.addWidget(QLabel("<b>Now Playing (Synced):</b>"))
+        
+        # Reading Input
+        reading_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        reading_input_container = QWidget()
+        ric_layout = QVBoxLayout(reading_input_container)
+        ric_layout.addWidget(QLabel("<b>Input (Markdown):</b>"))
+        self.text_editor = QTextEdit() # Keep name for compatibility, but this is Reading Input
+        self.text_editor.setPlaceholderText("Type markdown text here...")
+        ric_layout.addWidget(self.text_editor)
+        ric_layout.setContentsMargins(0,0,0,0)
+        
+        # Reading Output
+        reading_output_container = QWidget()
+        roc_layout = QVBoxLayout(reading_output_container)
+        roc_layout.addWidget(QLabel("<b>Now Playing (Synced):</b>"))
         self.lyrics_view = QTextEdit()
         self.lyrics_view.setReadOnly(True)
         self.lyrics_view.setStyleSheet("font-size: 14pt; color: #555;")
-        reading_layout.addWidget(self.lyrics_view)
+        roc_layout.addWidget(self.lyrics_view)
+        roc_layout.setContentsMargins(0,0,0,0)
+        
+        reading_splitter.addWidget(reading_input_container)
+        reading_splitter.addWidget(reading_output_container)
+        reading_splitter.setStretchFactor(0, 1)
+        reading_splitter.setStretchFactor(1, 1)
+        
+        # Add "Send to Translation" button
+        self.btn_send_to_trans = QPushButton("Send Input to Translation Tab")
+        self.btn_send_to_trans.clicked.connect(self.send_reading_to_translation)
+        reading_layout.addWidget(self.btn_send_to_trans)
+        
+        reading_layout.addWidget(reading_splitter)
         self.tabs.addTab(self.tab_reading, "Reading")
+
 
         # Tab 2: Translation
         self.tab_translation = QWidget()
         trans_layout = QVBoxLayout(self.tab_translation)
+        
+        trans_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Translation Input
+        trans_input_container = QWidget()
+        tic_layout = QVBoxLayout(trans_input_container)
+        tic_layout.addWidget(QLabel("<b>Translation Input:</b>"))
+        self.trans_input = QTextEdit()
+        self.trans_input.setPlaceholderText("Type text to translate here...")
+        tic_layout.addWidget(self.trans_input)
+        tic_layout.setContentsMargins(0,0,0,0)
+        
+        trans_splitter.addWidget(trans_input_container)
         
         # Controls
         trans_controls = QGroupBox("Settings")
@@ -249,22 +281,34 @@ class MainWindow(QMainWindow):
         self.btn_translate = QPushButton("Translate Input Text")
         self.btn_translate.clicked.connect(self.start_translation)
         
+        self.btn_transfer = QPushButton("Use Translated Text & Switch to Reader")
+        self.btn_transfer.clicked.connect(self.transfer_translation)
+        
+        self.btn_send_input_to_read = QPushButton("Send Input to Reader")
+        self.btn_send_input_to_read.clicked.connect(self.send_trans_input_to_reading)
+        
         trans_layout.addWidget(trans_controls)
         trans_layout.addWidget(self.btn_translate)
+        trans_layout.addWidget(self.btn_transfer)
+        trans_layout.addWidget(self.btn_send_input_to_read)
         
+        # Translation Output
+        trans_output_container = QWidget()
+        toc_layout = QVBoxLayout(trans_output_container)
+        toc_layout.addWidget(QLabel("<b>Translation Output:</b>"))
         self.trans_output = QTextEdit()
         self.trans_output.setReadOnly(True)
         self.trans_output.setPlaceholderText("Translation will appear here...")
-        trans_layout.addWidget(self.trans_output)
+        toc_layout.addWidget(self.trans_output)
+        toc_layout.setContentsMargins(0,0,0,0)
+        
+        trans_splitter.addWidget(trans_output_container)
+        trans_layout.addWidget(trans_splitter)
         
         self.tabs.addTab(self.tab_translation, "Translation")
 
-        splitter.addWidget(self.editor_container)
-        splitter.addWidget(self.tabs)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        main_layout.addWidget(self.tabs)
 
-        main_layout.addWidget(splitter)
 
         # 3. Player Controls
         controls_layout = QHBoxLayout()
@@ -329,13 +373,14 @@ class MainWindow(QMainWindow):
             loaded = Signal(list)
 
             def run(self):
-                self.loaded.emit(tts_handler.get_voices(language=["en", "fr"]))
+                self.loaded.emit(tts_handler.get_voices(language="all"))
 
         self.vloader = VLoader()
         self.vloader.loaded.connect(self.on_voices_loaded)
         self.vloader.start()
 
     def on_voices_loaded(self, voices):
+        self.available_voices = voices
         self.combo_voice.clear()
         mapped = tts_handler.voice_mapping.keys()
         for m in mapped:
@@ -450,10 +495,19 @@ class MainWindow(QMainWindow):
         # Find the active subtitle
         # Optimization: Could store last index to avoid searching from 0
         current_sub = None
-        for sub in self.subtitles:
+        for i, sub in enumerate(self.subtitles):
             if sub["start"] <= pos_sec <= (sub["start"] + sub["duration"]):
                 current_sub = sub
+                # Verify if the text at this offset matches
+                doc_text = self.lyrics_view.toPlainText()
+                expected_word = sub['text']
+                actual_text = doc_text[sub['text_offset'] : sub['text_offset'] + sub['word_len']]
+                
+                print(f"DEBUG: Match at {pos_sec:.2f}s. Sub: '{expected_word}' (Offset {sub['text_offset']}). Doc: '{actual_text}'")
                 break
+        
+        if not current_sub:
+             print(f"DEBUG: No match for time {pos_sec:.2f}. Range: {self.subtitles[0]['start']:.2f} to {self.subtitles[-1]['start'] + self.subtitles[-1]['duration']:.2f}")
 
         if current_sub:
             self.highlight_word(current_sub["text_offset"], current_sub["word_len"])
@@ -502,7 +556,7 @@ class MainWindow(QMainWindow):
             self.input_apikey.setFocus()
 
     def start_translation(self):
-        text = self.text_editor.toPlainText().strip()
+        text = self.trans_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Empty", "Please enter some text to translate.")
             return
@@ -532,6 +586,55 @@ class MainWindow(QMainWindow):
         self.trans_output.setPlainText(f"Error: {err}")
         QMessageBox.critical(self, "Translation Error", err)
 
+    def transfer_translation(self):
+        text = self.trans_output.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Empty", "No translated text to transfer.")
+            return
+
+        # 1. Transfer text
+        self.text_editor.setText(text)
+        
+        # 2. Switch tab
+        self.tabs.setCurrentIndex(0) # Reading tab
+
+        # 3. Auto-select voice
+        target_lang = self.combo_lang.currentData() # e.g. "fr"
+        
+        # Find a voice that starts with this language code
+        # We prefer "Neural" voices if possible, but just matching locale is good start.
+        # self.available_voices is list of dicts: {'name':..., 'gender':..., 'language':...}
+        
+        best_voice_name = None
+        for v in self.available_voices:
+            if v['language'].startswith(target_lang):
+                best_voice_name = v['name']
+                break
+        
+        if best_voice_name:
+            # Find index in combo
+            index = self.combo_voice.findData(best_voice_name)
+            if index >= 0:
+                self.combo_voice.setCurrentIndex(index)
+                self.status_label.setText(f"Switched to voice: {best_voice_name}")
+            else:
+                self.status_label.setText(f"Voice {best_voice_name} not found in combo.")
+        else:
+            self.status_label.setText(f"No voice found for language {target_lang}")
+
+    def send_reading_to_translation(self):
+        text = self.text_editor.toPlainText()
+        self.trans_input.setText(text)
+        self.tabs.setCurrentIndex(1) # Switch to Translation
+        
+    def send_trans_input_to_reading(self):
+        text = self.trans_input.toPlainText()
+        self.text_editor.setText(text)
+        self.tabs.setCurrentIndex(0) # Switch to Reading
+        # Attempt to auto-select voice based on current translation target lang?
+        # Or maybe we should infer language from text? That's hard.
+        # Let's just switch. The user can select voice.
+
     # -- Utilities --
 
     def load_file(self):
@@ -540,7 +643,14 @@ class MainWindow(QMainWindow):
         )
         if path:
             with open(path, "r", encoding="utf-8") as f:
-                self.text_editor.setText(f.read())
+                content = f.read()
+                
+            # Load into the active tab's input
+            current_index = self.tabs.currentIndex()
+            if current_index == 1: # Translation Tab
+                self.trans_input.setText(content)
+            else: # Reading Tab (default)
+                self.text_editor.setText(content)
 
     def set_ui_generating(self, generating):
         self.btn_generate.setEnabled(not generating)
