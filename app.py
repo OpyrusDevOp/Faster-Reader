@@ -20,6 +20,10 @@ from PySide6.QtWidgets import (
     QStyle,
     QSlider,
     QSplitter,
+    QTabWidget,
+    QLineEdit,
+    QGroupBox,
+    QFormLayout,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -27,6 +31,7 @@ from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor, QFont
 
 import tts_handler
 import handle_text
+from translation_worker import TranslationWorker
 
 
 class TTSWorker(QThread):
@@ -195,18 +200,67 @@ class MainWindow(QMainWindow):
 
         editor_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Lyrics / Teleprompter
-        self.lyrics_container = QWidget()
-        lyrics_layout = QVBoxLayout(self.lyrics_container)
-        lyrics_layout.addWidget(QLabel("<b>Now Playing (Synced):</b>"))
+        # Tabs (Reading / Translation)
+        self.tabs = QTabWidget()
+
+        # Tab 1: Reading (Synced)
+        self.tab_reading = QWidget()
+        reading_layout = QVBoxLayout(self.tab_reading)
+        reading_layout.addWidget(QLabel("<b>Now Playing (Synced):</b>"))
         self.lyrics_view = QTextEdit()
         self.lyrics_view.setReadOnly(True)
         self.lyrics_view.setStyleSheet("font-size: 14pt; color: #555;")
-        lyrics_layout.addWidget(self.lyrics_view)
-        lyrics_layout.setContentsMargins(0, 0, 0, 0)
+        reading_layout.addWidget(self.lyrics_view)
+        self.tabs.addTab(self.tab_reading, "Reading")
+
+        # Tab 2: Translation
+        self.tab_translation = QWidget()
+        trans_layout = QVBoxLayout(self.tab_translation)
+        
+        # Controls
+        trans_controls = QGroupBox("Settings")
+        trans_form = QFormLayout(trans_controls)
+        
+        self.combo_provider = QComboBox()
+        self.combo_provider.addItems(["Google (Free)", "DeepL (API Key)"])
+        self.combo_provider.currentIndexChanged.connect(self.on_provider_changed)
+        
+        self.input_apikey = QLineEdit()
+        self.input_apikey.setPlaceholderText("Enter DeepL API Key")
+        self.input_apikey.setEchoMode(QLineEdit.EchoMode.Password)
+        self.input_apikey.setEnabled(False) # Default is Google
+
+        self.combo_lang = QComboBox()
+        # Common languages
+        self.combo_lang.addItem("English", "en")
+        self.combo_lang.addItem("French", "fr")
+        self.combo_lang.addItem("Spanish", "es")
+        self.combo_lang.addItem("German", "de")
+        self.combo_lang.addItem("Italian", "it")
+        self.combo_lang.addItem("Portuguese", "pt")
+        self.combo_lang.addItem("Russian", "ru")
+        self.combo_lang.addItem("Japanese", "ja")
+        self.combo_lang.addItem("Chinese (Simplified)", "zh-CN")
+        
+        trans_form.addRow("Provider:", self.combo_provider)
+        trans_form.addRow("API Key:", self.input_apikey)
+        trans_form.addRow("Target Lang:", self.combo_lang)
+        
+        self.btn_translate = QPushButton("Translate Input Text")
+        self.btn_translate.clicked.connect(self.start_translation)
+        
+        trans_layout.addWidget(trans_controls)
+        trans_layout.addWidget(self.btn_translate)
+        
+        self.trans_output = QTextEdit()
+        self.trans_output.setReadOnly(True)
+        self.trans_output.setPlaceholderText("Translation will appear here...")
+        trans_layout.addWidget(self.trans_output)
+        
+        self.tabs.addTab(self.tab_translation, "Translation")
 
         splitter.addWidget(self.editor_container)
-        splitter.addWidget(self.lyrics_container)
+        splitter.addWidget(self.tabs)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
 
@@ -323,7 +377,7 @@ class MainWindow(QMainWindow):
         self.subtitles = subs
 
         # Setup Lyrics View
-        self.lyrics_view.setText(clean_text)
+        self.lyrics_view.setPlainText(clean_text)
 
         # Setup Player
         self.player.setSource(QUrl.fromLocalFile(path))
@@ -440,6 +494,43 @@ class MainWindow(QMainWindow):
         # Scroll to ensure visible
         self.lyrics_view.setTextCursor(cursor)
         self.lyrics_view.ensureCursorVisible()
+
+    def on_provider_changed(self, index):
+        is_deepl = (index == 1)
+        self.input_apikey.setEnabled(is_deepl)
+        if is_deepl:
+            self.input_apikey.setFocus()
+
+    def start_translation(self):
+        text = self.text_editor.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Empty", "Please enter some text to translate.")
+            return
+
+        provider = "google" if self.combo_provider.currentIndex() == 0 else "deepl"
+        api_key = self.input_apikey.text().strip()
+        target_lang = self.combo_lang.currentData()
+
+        if provider == "deepl" and not api_key:
+            QMessageBox.warning(self, "Missing Key", "DeepL requires an API Key.")
+            return
+
+        self.btn_translate.setEnabled(False)
+        self.trans_output.setPlainText("Translating...")
+        
+        self.trans_worker = TranslationWorker(text, target_lang, provider, api_key)
+        self.trans_worker.finished.connect(self.on_trans_finished)
+        self.trans_worker.error.connect(self.on_trans_error)
+        self.trans_worker.start()
+
+    def on_trans_finished(self, result):
+        self.btn_translate.setEnabled(True)
+        self.trans_output.setPlainText(result)
+
+    def on_trans_error(self, err):
+        self.btn_translate.setEnabled(True)
+        self.trans_output.setPlainText(f"Error: {err}")
+        QMessageBox.critical(self, "Translation Error", err)
 
     # -- Utilities --
 

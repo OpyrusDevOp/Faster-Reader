@@ -2,3 +2,4 @@ PySide6
 edge-tts
 emoji
 pyinstaller
+deep-translator
