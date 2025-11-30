@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
             loaded = Signal(list)
 
             def run(self):
-                self.loaded.emit(tts_handler.get_voices())
+                self.loaded.emit(tts_handler.get_voices(language=["en", "fr"]))
 
         self.vloader = VLoader()
         self.vloader.loaded.connect(self.on_voices_loaded)

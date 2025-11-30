@@ -209,13 +209,21 @@ def get_voices(language=None):
     return asyncio.run(_get_voices(language))
 
 
-async def _get_voices(language=None):
+async def _get_voices(languages=None):
     all_voices = await edge_tts.list_voices()
-    language = language or DEFAULT_LANGUAGE
+    
+    if languages is None:
+        languages = [DEFAULT_LANGUAGE]
+    elif isinstance(languages, str):
+        if languages == "all":
+            languages = None
+        else:
+            languages = [languages]
+
     filtered_voices = [
         {"name": v["ShortName"], "gender": v["Gender"], "language": v["Locale"]}
         for v in all_voices
-        if language == "all" or language is None or v["Locale"] == language
+        if languages is None or any(v["Locale"].startswith(lang) for lang in languages)
     ]
     return filtered_voices
 
